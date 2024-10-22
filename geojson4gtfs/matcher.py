@@ -1,10 +1,10 @@
 import csv
 import io
 import json
+import logging
 import os
 import zipfile
 
-from shapely import frechet_distance
 from shapely.geometry import Point, LineString
 from shapely.ops import nearest_points
 
@@ -17,6 +17,9 @@ class GeojsonMatcher:
 
         self._gtfs_trip_patterns = dict()
         self._gtfs_trip_patterns_trip_ids = dict()
+        self._gtfs_trips_shape_ids = dict()
+
+        self._gtfs_shapes = dict()
 
         self._geod = Geod(ellps='WGS84')
         
@@ -43,7 +46,6 @@ class GeojsonMatcher:
             end_point = trip_pattern_coordinates[-1]
 
             line_string_candidates = dict()
-
             for index, line_string in enumerate(self._geojson_linestrings):
                 # check for the start and end point of the trip matches the linestring start and end
                 if self._geod.geometry_length(LineString(nearest_points(Point(line_string.coords[0]), start_point))) > 50:
@@ -67,12 +69,16 @@ class GeojsonMatcher:
                 # determine linestring index with the shortest possible length, this must be our linestring!
                 line_string_index = min(line_string_candidates, key = line_string_candidates.get)
 
-                print(f"Index {line_string_index} is a possible candidate")
-                #print(f"{trip_pattern_id}")
-            else:
-                pass #print("No matching linestring found")
+                # render shape data and store shape ID for trip pattern
+                shape_id = self._create_shape(trip_pattern_id, self._geojson_linestrings[line_string_index])
 
-        
+                for trip_id in self._gtfs_trip_patterns_trip_ids[trip_pattern_id]:
+                    self._gtfs_trips_shape_ids[trip_id] = shape_id
+            else:
+                logging.warning(f"no matching line string found for trip pattern {trip_pattern_id}")
+
+        # generate shape data output
+        self._write_gtfs_data(gtfs_input, gtfs_output)
 
     def _read_geojson_file(self, geojson_file):
         geojson = json.load(geojson_file)
@@ -131,9 +137,6 @@ class GeojsonMatcher:
                 # free up some memory ...
                 del stop_coordinate_index
                 del trip_stop_id_lists
-
-                print(f"Found {len(self._gtfs_trip_patterns.keys())} TPs")
-
         else:
             # read stop location data into index
             stop_coordinate_index = dict()
@@ -175,6 +178,85 @@ class GeojsonMatcher:
             del stop_coordinate_index
             del trip_stop_id_lists
 
-            print(f"Found {len(self._gtfs_trip_patterns.keys())} TPs")
+    def _write_gtfs_data(self, gtfs_input, gtfs_output):
+
+        if gtfs_input.lower().endswith('.zip'):
+            with zipfile.ZipFile(gtfs_input, 'r') as gtfs_input_archive:
+                gtfs_input_archive.extractall(os.path.dirname(gtfs_input))
+
+        # remove old shapes.txt
+        os.remove(os.path.join(gtfs_output, 'shapes.txt'))
+        
+        # write shape data
+        with open(os.path.join(gtfs_output, 'shapes.txt'), 'w', newline='', encoding='utf-8') as txt_shapes:
+            txt_shapes_writer = csv.DictWriter(txt_shapes, fieldnames=['shape_id', 'shape_pt_lat', 'shape_pt_lon', 'shape_pt_sequence', 'shape_dist_traveled'])
+            txt_shapes_writer.writeheader()
+
+            for _, shape_data in self._gtfs_shapes.items():
+                txt_shapes_writer.writerows(shape_data)
+
+        # load existing trips.txt into memory ...
+        trips_data = list()
+
+        with open(os.path.join(gtfs_output, 'trips.txt'), 'r', encoding='utf-8') as txt_trips:
+            txt_trips_reader = csv.DictReader(txt_trips)
+            trips_data = list(txt_trips_reader)
+
+        # remove old trips.txt
+        os.remove(os.path.join(gtfs_output, 'trips.txt'))
+
+        # write trip data 
+        with open(os.path.join(gtfs_output, 'trips.txt'), 'w', newline='', encoding='utf-8') as txt_trips:
+            txt_trips_headers = list(trips_data[0].keys())
+
+            if 'shape_id' not in txt_trips_headers:
+                txt_trips_headers.append('shape_id')
+            
+            txt_trips_writer = csv.DictWriter(txt_trips, fieldnames=txt_trips_headers)
+            txt_trips_writer.writeheader()
+
+            for trip_record in trips_data:
+                trip_record['shape_id'] = self._gtfs_trips_shape_ids[trip_record['trip_id']]
+
+                txt_trips_writer.writerow(trip_record)
+        
+    
+    def _create_shape(self, trip_pattern_id, line_string):
+        
+        shape_data = list()
+
+        shape_id = f"de:vpe:shape:{len(self._gtfs_shapes.keys())}"
+        shape_dist_traveled = 0.0
+        for i in range(len(line_string.coords) - 1):
+            shape_pt = line_string.coords[i]
+            next_shape_pt = line_string.coords[i + 1]
+
+            shape_data.append({
+                'shape_id': shape_id,
+                'shape_pt_lat': shape_pt[1],
+                'shape_pt_lon': shape_pt[0],
+                'shape_pt_sequence': i + 1,
+                'shape_dist_traveled': shape_dist_traveled
+            })
+
+            shape_dist_traveled = shape_dist_traveled + (self._geod.geometry_length(LineString([shape_pt, next_shape_pt])) / 1000.0)
+        
+        # finally add last shape point
+        last_shape_pt = line_string.coords[-1]
+
+        shape_data.append({
+            'shape_id': shape_id,
+            'shape_pt_lat': last_shape_pt[1],
+            'shape_pt_lon': last_shape_pt[0],
+            'shape_pt_sequence': len(shape_data) + 1,
+            'shape_dist_traveled': shape_dist_traveled
+        })
+
+        # add shape data to GTFS shape index and return 
+        self._gtfs_shapes[shape_id] = shape_data
+
+        return shape_id
+
+
 
                     
