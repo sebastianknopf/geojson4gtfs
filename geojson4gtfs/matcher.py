@@ -59,21 +59,28 @@ class GeojsonMatcher:
             line_string_candidates = dict()
             for index, line_string in enumerate(self._geojson_linestrings):
                 # check for the start and end point of the trip matches the linestring start and end
-                if self._geod.geometry_length(LineString(nearest_points(Point(line_string.coords[0]), start_point))) > 50:
+                if self._geod.geometry_length(LineString(nearest_points(Point(line_string.coords[0]), start_point))) > 20:
                     continue
 
-                if self._geod.geometry_length(LineString(nearest_points(Point(line_string.coords[-1]), end_point))) > 50:
+                if self._geod.geometry_length(LineString(nearest_points(Point(line_string.coords[-1]), end_point))) > 20:
                     continue
 
                 # check whether any point in trip pattern is not in this linestring
                 line_string_matched = True
+                
+                trip_pattern_projections = list()
                 for tpc in trip_pattern_coordinates:
-                    if self._geod.geometry_length(LineString(nearest_points(line_string, tpc))) > 50:
+                    if self._geod.geometry_length(LineString(nearest_points(line_string, tpc))) > 20:
                         line_string_matched = False
                         break
 
+                    trip_pattern_projections.append(line_string.project(tpc))
+
+                # check whether projections are increasing, this ensures the stops order matches the shape
+                line_projection_matched = True #trip_pattern_projections == sorted(trip_pattern_projections)
+
                 # if everything seems okay, use this as candidate
-                if line_string_matched:
+                if line_string_matched and line_projection_matched:
                     line_string_candidates[index] = self._geod.geometry_length(line_string)
             
             if len(line_string_candidates) > 0:
@@ -175,7 +182,11 @@ class GeojsonMatcher:
             txt_trips_writer.writeheader()
 
             for trip_record in trips_data:
-                trip_record['shape_id'] = self._gtfs_trips_shape_ids[trip_record['trip_id']]
+                if trip_record['trip_id'] in self._gtfs_trips_shape_ids:
+                    trip_record['shape_id'] = self._gtfs_trips_shape_ids[trip_record['trip_id']]
+                else:
+                    trip_record['shape_id'] = ''
+
                 txt_trips_writer.writerow(trip_record)
 
         # if output should be a ZIP archive, compress everything
