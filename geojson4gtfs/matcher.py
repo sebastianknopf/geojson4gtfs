@@ -95,6 +95,9 @@ class GeojsonMatcher:
             else:
                 logging.warning(f"no matching line string found for trip pattern {trip_pattern_id}")
 
+                affected_trip_ids = '\n'.join(self._gtfs_trip_patterns_trip_ids[trip_pattern_id])
+                logging.info(f"this has impacts on the following trip IDs:\n{affected_trip_ids}")
+
         # generate shape data output
         self._write_gtfs_data(working_directory, gtfs_output)
 
