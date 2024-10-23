@@ -191,7 +191,7 @@ class GeojsonMatcher:
 
         # if output should be a ZIP archive, compress everything
         if gtfs_output.lower().endswith('.zip'):
-            with zipfile.ZipFile(gtfs_output, 'w') as gtfs_output_archive:
+            with zipfile.ZipFile(gtfs_output, 'w', zipfile.ZIP_DEFLATED) as gtfs_output_archive:
                 for txt_file in os.listdir(working_directory):
                     if txt_file.endswith('.txt'):
                         gtfs_output_archive.write(
@@ -199,7 +199,7 @@ class GeojsonMatcher:
                             txt_file
                         )
 
-                    os.remove(os.path.join(working_directory, txt_file))
+                        os.remove(os.path.join(working_directory, txt_file))
     
     def _create_shape(self, trip_pattern_id, line_string):
         
