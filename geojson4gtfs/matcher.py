@@ -37,8 +37,19 @@ class GeojsonMatcher:
 
     def run(self, gtfs_input, gtfs_output):
         
+        # determine working directory and copy input data or exract input archive
+        working_directory = gtfs_output
+        if gtfs_output.lower().endswith('.zip'):
+            working_directory = os.path.dirname(gtfs_output)
+
+        if gtfs_input.lower().endswith('.zip'):
+            with zipfile.ZipFile(gtfs_input, 'r') as gtfs_input_archive:
+                gtfs_input_archive.extractall(working_directory)
+        else:
+            pass
+        
         # read trip patterns of input GTFS feed into working index
-        self._read_gtfs_index(gtfs_input)
+        self._read_gtfs_index(working_directory)
 
         # iterate over each trip pattern and find best matching shape
         for trip_pattern_id, trip_pattern_coordinates in self._gtfs_trip_patterns.items():
@@ -78,7 +89,7 @@ class GeojsonMatcher:
                 logging.warning(f"no matching line string found for trip pattern {trip_pattern_id}")
 
         # generate shape data output
-        self._write_gtfs_data(gtfs_input, gtfs_output)
+        self._write_gtfs_data(working_directory, gtfs_output)
 
     def _read_geojson_file(self, geojson_file):
         geojson = json.load(geojson_file)
@@ -92,103 +103,54 @@ class GeojsonMatcher:
 
                 self._geojson_linestrings.append(LineString(coordinates))        
 
-    def _read_gtfs_index(self, gtfs_input):
-        
+    def _read_gtfs_index(self, working_directory):
         # read internal GTFS data index
-        if gtfs_input.lower().endswith('.zip'):
-            with zipfile.ZipFile(gtfs_input) as geojson_zip_file:
-                
-                # read stop location data into index
-                stop_coordinate_index = dict()
-                with io.TextIOWrapper(geojson_zip_file.open('stops.txt'), encoding='utf-8') as txt_stops_file:
-                    txt_stops_reader = csv.DictReader(txt_stops_file)
-                    for txt_stops_row in txt_stops_reader:
-                        stop_coordinate_index[txt_stops_row['stop_id']] = Point(
-                            float(txt_stops_row['stop_lon']),
-                            float(txt_stops_row['stop_lat'])
-                        )
+        # read stop location data into index
+        stop_coordinate_index = dict()
+        with open(os.path.join(working_directory, 'stops.txt'), 'r') as txt_stops_file:
+            txt_stops_reader = csv.DictReader(txt_stops_file)
+            for txt_stops_row in txt_stops_reader:
+                stop_coordinate_index[txt_stops_row['stop_id']] = Point(
+                    float(txt_stops_row['stop_lon']),
+                    float(txt_stops_row['stop_lat'])
+                )
 
-                # read trip stop IDs into temporary index
-                trip_stop_id_lists = dict()
-                with io.TextIOWrapper(geojson_zip_file.open('stop_times.txt'), encoding='utf-8') as txt_stop_times_file:
-                    txt_stop_times_reader = csv.DictReader(txt_stop_times_file)
-                    for txt_stop_times_row in txt_stop_times_reader:
-                        trip_id = txt_stop_times_row['trip_id']
+        # read trip stop IDs into temporary index
+        trip_stop_id_lists = dict()
+        with open(os.path.join(working_directory, 'stop_times.txt'), 'r') as txt_stop_times_file:
+            txt_stop_times_reader = csv.DictReader(txt_stop_times_file)
+            for txt_stop_times_row in txt_stop_times_reader:
+                trip_id = txt_stop_times_row['trip_id']
 
-                        if not trip_id in trip_stop_id_lists:
-                            trip_stop_id_lists[trip_id] = list()
+                if not trip_id in trip_stop_id_lists:
+                    trip_stop_id_lists[trip_id] = list()
 
-                        trip_stop_id_lists[trip_id].append(txt_stop_times_row['stop_id'])
+                trip_stop_id_lists[trip_id].append(txt_stop_times_row['stop_id'])
 
-                # transform stop IDs to trip_patterns and coordinates
-                for trip_id, stop_ids in trip_stop_id_lists.items():
-                    trip_pattern_id = '#'.join(stop_ids)
+        # transform stop IDs to trip_patterns and coordinates
+        for trip_id, stop_ids in trip_stop_id_lists.items():
+            trip_pattern_id = '#'.join(stop_ids)
 
-                    if not trip_pattern_id in self._gtfs_trip_patterns:
-                        self._gtfs_trip_patterns[trip_pattern_id] = list()
-                        for stop_id in stop_ids:
-                            self._gtfs_trip_patterns[trip_pattern_id].append(stop_coordinate_index[stop_id])
+            if not trip_pattern_id in self._gtfs_trip_patterns:
+                self._gtfs_trip_patterns[trip_pattern_id] = list()
+                for stop_id in stop_ids:
+                    self._gtfs_trip_patterns[trip_pattern_id].append(stop_coordinate_index[stop_id])
 
-                    if not trip_pattern_id in self._gtfs_trip_patterns_trip_ids:
-                        self._gtfs_trip_patterns_trip_ids[trip_pattern_id] = list()
+            if not trip_pattern_id in self._gtfs_trip_patterns_trip_ids:
+                self._gtfs_trip_patterns_trip_ids[trip_pattern_id] = list()
 
-                    self._gtfs_trip_patterns_trip_ids[trip_pattern_id].append(trip_id)
+            self._gtfs_trip_patterns_trip_ids[trip_pattern_id].append(trip_id)
 
-                # free up some memory ...
-                del stop_coordinate_index
-                del trip_stop_id_lists
-        else:
-            # read stop location data into index
-            stop_coordinate_index = dict()
-            with open(os.path.join(gtfs_input, 'stops.txt'), 'r') as txt_stops_file:
-                txt_stops_reader = csv.DictReader(txt_stops_file)
-                for txt_stops_row in txt_stops_reader:
-                    stop_coordinate_index[txt_stops_row['stop_id']] = Point(
-                        float(txt_stops_row['stop_lon']),
-                        float(txt_stops_row['stop_lat'])
-                    )
+        # free up some memory ...
+        del stop_coordinate_index
+        del trip_stop_id_lists
 
-            # read trip stop IDs into temporary index
-            trip_stop_id_lists = dict()
-            with open(os.path.join(gtfs_input, 'stop_times.txt'), 'r') as txt_stop_times_file:
-                txt_stop_times_reader = csv.DictReader(txt_stop_times_file)
-                for txt_stop_times_row in txt_stop_times_reader:
-                    trip_id = txt_stop_times_row['trip_id']
-
-                    if not trip_id in trip_stop_id_lists:
-                        trip_stop_id_lists[trip_id] = list()
-
-                    trip_stop_id_lists[trip_id].append(txt_stop_times_row['stop_id'])
-
-            # transform stop IDs to trip_patterns and coordinates
-            for trip_id, stop_ids in trip_stop_id_lists.items():
-                trip_pattern_id = '#'.join(stop_ids)
-
-                if not trip_pattern_id in self._gtfs_trip_patterns:
-                    self._gtfs_trip_patterns[trip_pattern_id] = list()
-                    for stop_id in stop_ids:
-                        self._gtfs_trip_patterns[trip_pattern_id].append(stop_coordinate_index[stop_id])
-
-                if not trip_pattern_id in self._gtfs_trip_patterns_trip_ids:
-                    self._gtfs_trip_patterns_trip_ids[trip_pattern_id] = list()
-
-                self._gtfs_trip_patterns_trip_ids[trip_pattern_id].append(trip_id)
-
-            # free up some memory ...
-            del stop_coordinate_index
-            del trip_stop_id_lists
-
-    def _write_gtfs_data(self, gtfs_input, gtfs_output):
-
-        if gtfs_input.lower().endswith('.zip'):
-            with zipfile.ZipFile(gtfs_input, 'r') as gtfs_input_archive:
-                gtfs_input_archive.extractall(os.path.dirname(gtfs_input))
-
-        # remove old shapes.txt
-        os.remove(os.path.join(gtfs_output, 'shapes.txt'))
+    def _write_gtfs_data(self, working_directory, gtfs_output):
+        # remove old shapes.txt and write new shape data
+        if os.path.exists(os.path.join(working_directory, 'shapes.txt')):
+            os.remove(os.path.join(working_directory, 'shapes.txt'))
         
-        # write shape data
-        with open(os.path.join(gtfs_output, 'shapes.txt'), 'w', newline='', encoding='utf-8') as txt_shapes:
+        with open(os.path.join(working_directory, 'shapes.txt'), 'w', newline='', encoding='utf-8') as txt_shapes:
             txt_shapes_writer = csv.DictWriter(txt_shapes, fieldnames=['shape_id', 'shape_pt_lat', 'shape_pt_lon', 'shape_pt_sequence', 'shape_dist_traveled'])
             txt_shapes_writer.writeheader()
 
@@ -198,17 +160,14 @@ class GeojsonMatcher:
         # load existing trips.txt into memory ...
         trips_data = list()
 
-        with open(os.path.join(gtfs_output, 'trips.txt'), 'r', encoding='utf-8') as txt_trips:
+        with open(os.path.join(working_directory, 'trips.txt'), 'r', encoding='utf-8') as txt_trips:
             txt_trips_reader = csv.DictReader(txt_trips)
             trips_data = list(txt_trips_reader)
 
-        # remove old trips.txt
-        os.remove(os.path.join(gtfs_output, 'trips.txt'))
-
-        # write trip data 
-        with open(os.path.join(gtfs_output, 'trips.txt'), 'w', newline='', encoding='utf-8') as txt_trips:
+        # remove old trips.txt and write adapted trip data
+        os.remove(os.path.join(working_directory, 'trips.txt'))
+        with open(os.path.join(working_directory, 'trips.txt'), 'w', newline='', encoding='utf-8') as txt_trips:
             txt_trips_headers = list(trips_data[0].keys())
-
             if 'shape_id' not in txt_trips_headers:
                 txt_trips_headers.append('shape_id')
             
@@ -217,9 +176,19 @@ class GeojsonMatcher:
 
             for trip_record in trips_data:
                 trip_record['shape_id'] = self._gtfs_trips_shape_ids[trip_record['trip_id']]
-
                 txt_trips_writer.writerow(trip_record)
-        
+
+        # if output should be a ZIP archive, compress everything
+        if gtfs_output.lower().endswith('.zip'):
+            with zipfile.ZipFile(gtfs_output, 'w') as gtfs_output_archive:
+                for txt_file in os.listdir(working_directory):
+                    if txt_file.endswith('.txt'):
+                        gtfs_output_archive.write(
+                            os.path.join(working_directory, txt_file),
+                            txt_file
+                        )
+
+                    os.remove(os.path.join(working_directory, txt_file))
     
     def _create_shape(self, trip_pattern_id, line_string):
         
