@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import yaml
 import zipfile
 
 from shapely.geometry import Point, LineString
@@ -12,7 +13,20 @@ from pyproj import Geod
 
 class GeojsonMatcher:
 
-    def __init__(self, geojson_input):
+    def __init__(self, geojson_input, config_filename):
+
+        self._geod = Geod(ellps='WGS84')
+
+        if config_filename is not None:
+            with open(config_filename, 'r') as config_file:
+                self._config = yaml.safe_load(config_file)
+        else:
+            self._config = dict()
+
+            self._config['config'] = dict()
+            self._config['config']['maximum_matching_distance'] = 20
+
+        # generate empty containers
         self._geojson_linestrings = list()
 
         self._gtfs_trip_patterns = dict()
@@ -20,8 +34,6 @@ class GeojsonMatcher:
         self._gtfs_trips_shape_ids = dict()
 
         self._gtfs_shapes = dict()
-
-        self._geod = Geod(ellps='WGS84')
         
         # read all geojson linestrings to internal storage
         if geojson_input.lower().endswith('.zip'):

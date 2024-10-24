@@ -1,0 +1,2 @@
+config:
+  maximum_matching_distance: 20
